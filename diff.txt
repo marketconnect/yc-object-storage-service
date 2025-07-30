@@ -1,0 +1,273 @@
+--- /dev/null
++++ b/.env.example
+@@ -0,0 +1,8 @@
++# Server configuration
++SERVER_PORT=8081
++
++# Yandex Object Storage configuration
++S3_ENDPOINT=storage.yandexcloud.net
++S3_REGION=ru-central1
++S3_BUCKET_NAME=your-bucket-name
++S3_ACCESS_KEY_ID=your-access-key
++S3_SECRET_ACCESS_KEY=your-secret-key
+--- /dev/null
++++ b/api/handlers.go
+@@ -0,0 +1,48 @@
++package api
++
++import (
++	"net/http"
++	"storage-service/s3"
++	"strconv"
++	"time"
++
++	"github.com/gin-gonic/gin"
++)
++
++type Handler struct {
++	S3Client *s3.Client
++}
++
++func (h *Handler) ListObjectsHandler(c *gin.Context) {
++	prefix := c.Query("prefix")
++	if prefix == "" {
++		c.JSON(http.StatusBadRequest, gin.H{"error": "prefix query parameter is required"})
++		return
++	}
++
++	keys, err := h.S3Client.ListObjects(prefix)
++	if err != nil {
++		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list objects", "details": err.Error()})
++		return
++	}
++
++	c.JSON(http.StatusOK, gin.H{"objects": keys})
++}
++
++func (h *Handler) GeneratePresignedURLHandler(c *gin.Context) {
++	objectKey := c.Query("objectKey")
++	if objectKey == "" {
++		c.JSON(http.StatusBadRequest, gin.H{"error": "objectKey query parameter is required"})
++		return
++	}
++
++	expiresStr := c.DefaultQuery("expires", "3600") // Default to 1 hour
++	expires, err := strconv.ParseInt(expiresStr, 10, 64)
++	if err != nil {
++		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid expires parameter"})
++		return
++	}
++
++	lifetime := time.Duration(expires) * time.Second
++
++	url, err := h.S3Client.GeneratePresignedURL(objectKey, lifetime)
++	if err != nil {
++		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate presigned URL", "details": err.Error()})
++		return
++	}
++
++	c.JSON(http.StatusOK, gin.H{"url": url})
++}
+--- /dev/null
++++ b/config/config.go
+@@ -0,0 +1,33 @@
++package config
++
++import (
++	"log"
++	"os"
++
++	"github.com/joho/godotenv"
++)
++
++type Config struct {
++	ServerPort        string
++	S3Endpoint        string
++	S3Region          string
++	S3BucketName      string
++	S3AccessKeyID     string
++	S3SecretAccessKey string
++}
++
++func Load() *Config {
++	if err := godotenv.Load(); err != nil {
++		log.Println("No .env file found, using environment variables")
++	}
++
++	return &Config{
++		ServerPort:        getEnv("SERVER_PORT", "8081"),
++		S3Endpoint:        getEnv("S3_ENDPOINT", ""),
++		S3Region:          getEnv("S3_REGION", ""),
++		S3BucketName:      getEnv("S3_BUCKET_NAME", ""),
++		S3AccessKeyID:     getEnv("S3_ACCESS_KEY_ID", ""),
++		S3SecretAccessKey: getEnv("S3_SECRET_ACCESS_KEY", ""),
++	}
++}
++
++func getEnv(key, fallback string) string {
++	if value, ok := os.LookupEnv(key); ok {
++		return value
++	}
++	if fallback == "" {
++		log.Fatalf("FATAL: Environment variable %s is not set.", key)
++	}
++	return fallback
++}
+--- /dev/null
++++ b/go.mod
+@@ -0,0 +1,29 @@
++module storage-service
++
++go 1.21
++
++require (
++	github.com/aws/aws-sdk-go v1.54.5
++	github.com/gin-gonic/gin v1.10.0
++	github.com/joho/godotenv v1.5.1
++)
++
++require (
++	github.com/bytedance/sonic v1.11.6 // indirect
++	github.com/bytedance/sonic/loader v0.1.1 // indirect
++	github.com/cloudwego/base64x v0.1.4 // indirect
++	github.com/cloudwego/iasm v0.2.0 // indirect
++	github.com/gabriel-vasile/mimetype v1.4.3 // indirect
++	github.com/gin-contrib/sse v0.1.0 // indirect
++	github.com/go-playground/locales v0.14.1 // indirect
++	github.com/go-playground/universal-translator v0.18.1 // indirect
++	github.com/go-playground/validator/v10 v10.20.0 // indirect
++	github.com/goccy/go-json v0.10.2 // indirect
++	github.com/jmespath/go-jmespath v0.4.0 // indirect
++	github.com/json-iterator/go v1.1.12 // indirect
++	github.com/klauspost/cpuid/v2 v2.2.7 // indirect
++	github.com/leodido/go-urn v1.4.0 // indirect
++	github.com/mattn/go-isatty v0.0.20 // indirect
++	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
++	github.com/modern-go/reflect2 v1.0.2 // indirect
++	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
++	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
++	github.com/ugorji/go/codec v1.2.12 // indirect
++	golang.org/x/arch v0.8.0 // indirect
++	golang.org/x/crypto v0.23.0 // indirect
++	golang.org/x/net v0.25.0 // indirect
++	golang.org/x/sys v0.20.0 // indirect
++	golang.org/x/text v0.15.0 // indirect
++	google.golang.org/protobuf v1.34.1 // indirect
++	gopkg.in/yaml.v3 v3.0.1 // indirect
++)
+--- /dev/null
++++ b/main.go
+@@ -0,0 +1,36 @@
++package main
++
++import (
++	"fmt"
++	"log"
++	"storage-service/api"
++	"storage-service/config"
++	"storage-service/s3"
++
++	"github.com/gin-gonic/gin"
++)
++
++func main() {
++	cfg := config.Load()
++
++	s3Client := s3.NewClient(cfg)
++
++	handler := &api.Handler{
++		S3Client: s3Client,
++	}
++
++	router := gin.Default()
++
++	// Internal API routes
++	v1 := router.Group("/api/v1")
++	{
++		v1.GET("/list", handler.ListObjectsHandler)
++		v1.GET("/generate-url", handler.GeneratePresignedURLHandler)
++	}
++
++	// Health check
++	router.GET("/health", func(c *gin.Context) {
++		c.JSON(200, gin.H{"status": "ok"})
++	})
++
++	addr := fmt.Sprintf(":%s", cfg.ServerPort)
++	log.Printf("Starting storage service on %s", addr)
++	if err := router.Run(addr); err != nil {
++		log.Fatalf("Failed to run server: %v", err)
++	}
++}
+--- /dev/null
++++ b/s3/client.go
+@@ -0,0 +1,62 @@
++package s3
++
++import (
++	"log"
++	"storage-service/config"
++	"time"
++
++	"github.com/aws/aws-sdk-go/aws"
++	"github.com/aws/aws-sdk-go/aws/credentials"
++	"github.com/aws/aws-sdk-go/aws/session"
++	"github.com/aws/aws-sdk-go/service/s3"
++)
++
++type Client struct {
++	S3Svc      *s3.S3
++	BucketName string
++}
++
++func NewClient(cfg *config.Config) *Client {
++	awsCfg := &aws.Config{
++		Credentials:      credentials.NewStaticCredentials(cfg.S3AccessKeyID, cfg.S3SecretAccessKey, ""),
++		Endpoint:         aws.String(cfg.S3Endpoint),
++		Region:           aws.String(cfg.S3Region),
++		S3ForcePathStyle: aws.Bool(true),
++	}
++
++	sess, err := session.NewSession(awsCfg)
++	if err != nil {
++		log.Fatalf("Failed to create S3 session: %v", err)
++	}
++
++	return &Client{
++		S3Svc:      s3.New(sess),
++		BucketName: cfg.S3BucketName,
++	}
++}
++
++func (c *Client) ListObjects(prefix string) ([]string, error) {
++	input := &s3.ListObjectsV2Input{
++		Bucket: aws.String(c.BucketName),
++		Prefix: aws.String(prefix),
++	}
++
++	result, err := c.S3Svc.ListObjectsV2(input)
++	if err != nil {
++		return nil, err
++	}
++
++	var objectKeys []string
++	for _, item := range result.Contents {
++		objectKeys = append(objectKeys, *item.Key)
++	}
++
++	return objectKeys, nil
++}
++
++func (c *Client) GeneratePresignedURL(objectKey string, lifetime time.Duration) (string, error) {
++	req, _ := c.S3Svc.GetObjectRequest(&s3.GetObjectInput{
++		Bucket: aws.String(c.BucketName),
++		Key:    aws.String(objectKey),
++	})
++
++	urlStr, err := req.Presign(lifetime)
++	if err != nil {
++		return "", err
++	}
++
++	return urlStr, nil
++}
