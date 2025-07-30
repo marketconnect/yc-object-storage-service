@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -16,18 +17,27 @@ type Handler struct {
 
 func (h *Handler) ListObjectsHandler(c *gin.Context) {
 	prefix := c.Query("prefix")
-	if prefix == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "prefix query parameter is required"})
-		return
-	}
+	delimiter := c.Query("delimiter")
 
-	keys, err := h.S3Client.ListObjects(prefix)
+	output, err := h.S3Client.ListObjects(prefix, delimiter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list objects", "details": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"objects": keys})
+	c.JSON(http.StatusOK, gin.H{"folders": output.Folders, "files": output.Files})
+}
+
+func (h *Handler) ListAllFoldersHandler(c *gin.Context) {
+	folders, err := h.S3Client.ListAllFolders()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list all folders", "details": err.Error()})
+		return
+	}
+	// Sort for consistent ordering in the UI
+	sort.Strings(folders)
+
+	c.JSON(http.StatusOK, gin.H{"folders": folders})
 }
 
 func (h *Handler) GeneratePresignedURLHandler(c *gin.Context) {
