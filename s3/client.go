@@ -75,6 +75,45 @@ func (c *Client) ListObjects(prefix string, delimiter string) (*ListObjectsOutpu
 	return &ListObjectsOutput{Folders: folders, Files: files}, nil
 }
 
+func (c *Client) ListAllObjects(prefix string) ([]string, error) {
+	var files []string
+	var continuationToken *string
+
+	for {
+		input := &s3.ListObjectsV2Input{
+			Bucket:            aws.String(c.BucketName),
+			Prefix:            aws.String(prefix),
+			ContinuationToken: continuationToken,
+		}
+
+		result, err := c.S3Svc.ListObjectsV2(input)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, item := range result.Contents {
+			// Ignore the folder key itself if it's empty
+			if *item.Size > 0 {
+				files = append(files, *item.Key)
+			}
+		}
+
+		if !*result.IsTruncated {
+			break
+		}
+		continuationToken = result.NextContinuationToken
+	}
+
+	return files, nil
+}
+
+func (c *Client) GetObject(objectKey string) (*s3.GetObjectOutput, error) {
+	return c.S3Svc.GetObject(&s3.GetObjectInput{
+		Bucket: aws.String(c.BucketName),
+		Key:    aws.String(objectKey),
+	})
+}
+
 func (c *Client) ListAllFolders() ([]string, error) {
 	folderSet := make(map[string]struct{})
 	var lastKey *string

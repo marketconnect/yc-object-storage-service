@@ -27,6 +27,7 @@ func main() {
 	{
 		v1.GET("/list", handler.ListObjectsHandler)
 		v1.GET("/generate-url", handler.GeneratePresignedURLHandler)
+		v1.POST("/archive", handler.CreateArchiveHandler)
 		v1.GET("/list-all-folders", handler.ListAllFoldersHandler)
 	}
 

@@ -1,6 +1,9 @@
 package api
 
 import (
+	"archive/zip"
+	"io"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -10,6 +13,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+type ArchiveRequest struct {
+	Keys    []string `json:"keys"`
+	Folders []string `json:"folders"`
+}
 
 type Handler struct {
 	S3Client *s3.Client
@@ -63,4 +71,61 @@ func (h *Handler) GeneratePresignedURLHandler(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"url": url})
+}
+
+func (h *Handler) CreateArchiveHandler(c *gin.Context) {
+	var req ArchiveRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body", "details": err.Error()})
+		return
+	}
+
+	c.Header("Content-Type", "application/zip")
+	c.Header("Content-Disposition", "attachment; filename=archive.zip")
+
+	zipWriter := zip.NewWriter(c.Writer)
+	defer zipWriter.Close()
+
+	allKeys := make(map[string]struct{})
+
+	// Add individual files
+	for _, key := range req.Keys {
+		allKeys[key] = struct{}{}
+	}
+
+	// Add files from folders
+	for _, folderPrefix := range req.Folders {
+		files, err := h.S3Client.ListAllObjects(folderPrefix)
+		if err != nil {
+			// Log the error but try to continue
+			log.Printf("Error listing objects for prefix %s: %v", folderPrefix, err)
+			continue
+		}
+		for _, file := range files {
+			allKeys[file] = struct{}{}
+		}
+	}
+
+	// Process all unique keys
+	for key := range allKeys {
+		obj, err := h.S3Client.GetObject(key)
+		if err != nil {
+			log.Printf("Error getting object %s: %v", key, err)
+			continue
+		}
+
+		f, err := zipWriter.Create(key)
+		if err != nil {
+			obj.Body.Close()
+			log.Printf("Error creating zip entry for %s: %v", key, err)
+			continue
+		}
+
+		if _, err := io.Copy(f, obj.Body); err != nil {
+			obj.Body.Close()
+			log.Printf("Error copying object body for %s: %v", key, err)
+			continue
+		}
+		obj.Body.Close()
+	}
 }
