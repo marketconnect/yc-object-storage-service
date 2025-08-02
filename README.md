@@ -132,10 +132,3 @@ The project structure follows standard Go project layout:
 └── .env.example   # Example environment configuration
 ```
 
-## License
-
-[Add your license information here]
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
