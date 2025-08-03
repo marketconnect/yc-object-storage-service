@@ -70,7 +70,7 @@ func (h *Handler) GeneratePresignedURLHandler(c *gin.Context) {
 		return
 	}
 
-	c.String(http.StatusOK, url)
+	c.PureJSON(http.StatusOK, gin.H{"url": url})
 }
 
 func (h *Handler) CreateArchiveHandler(c *gin.Context) {
